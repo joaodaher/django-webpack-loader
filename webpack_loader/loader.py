@@ -1,6 +1,7 @@
 import json
 import time
 
+import requests
 from django.conf import settings
 from django.contrib.staticfiles.storage import staticfiles_storage
 
@@ -21,14 +22,28 @@ class WebpackLoader(object):
         self.config = load_config(self.name)
 
     def _load_assets(self):
+        stats_file = self.config['STATS_FILE']
+        if stats_file.startswith('http'):
+            try:
+                return requests.get(stats_file).json()
+            except requests.exceptions.RequestException as e:
+                raise IOError(
+                    'Error while fetching {0}. Encountered: {1}'.format(
+                        stats_file, str(e)))
+            except ValueError:
+                # Requests raises ValueError on invalid json.
+                raise IOError(
+                    'Invalid webpack JSON retrieved from {0}'.format(
+                        stats_file))
+
         try:
-            with open(self.config['STATS_FILE']) as f:
+            with open(stats_file) as f:
                 return json.load(f)
         except IOError:
             raise IOError(
                 'Error reading {0}. Are you sure webpack has generated '
                 'the file and the path is correct?'.format(
-                    self.config['STATS_FILE']))
+                    stats_file))
 
     def get_assets(self):
         if self.config['CACHE']:
@@ -37,6 +52,7 @@ class WebpackLoader(object):
             return self._assets[self.name]
         return self._load_assets()
 
+
     def filter_chunks(self, chunks):
         for chunk in chunks:
             ignore = any(regex.match(chunk['name'])
@@ -44,6 +60,7 @@ class WebpackLoader(object):
             if not ignore:
                 chunk['url'] = self.get_chunk_url(chunk)
                 yield chunk
+
 
     def get_chunk_url(self, chunk):
         public_path = chunk.get('publicPath')
@@ -54,6 +71,7 @@ class WebpackLoader(object):
             self.config['BUNDLE_DIR_NAME'], chunk['name']
         )
         return staticfiles_storage.url(relpath)
+
 
     def get_bundle(self, bundle_name):
         assets = self.get_assets()
@@ -90,9 +108,9 @@ class WebpackLoader(object):
             if 'message' not in assets:
                 assets['message'] = ''
             error = u"""
-            {error} in {file}
-            {message}
-            """.format(**assets)
+                {error} in {file}
+                {message}
+                """.format(**assets)
             raise WebpackError(error)
 
         raise WebpackLoaderBadStatsError(
